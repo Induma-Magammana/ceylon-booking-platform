@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
     Container,
     Title,
@@ -12,6 +12,8 @@ import {
     Stack,
     Group,
     Alert,
+    Loader,
+    Center,
     FileInput,
     Image,
     Text,
@@ -24,11 +26,13 @@ import { useAuthStore } from '../../store/authStore';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 
-export default function CreateListing() {
+export default function EditListing() {
+    const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
     const { user, token, isAuthenticated } = useAuthStore();
     const [loading, setLoading] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [fetchingListing, setFetchingListing] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [imageFile, setImageFile] = useState<File | null>(null);
@@ -106,10 +110,11 @@ export default function CreateListing() {
             } else {
                 throw new Error(data.error || 'Failed to upload image');
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const error = err as Error;
             notifications.show({
                 title: 'Upload Failed',
-                message: err.message || 'Failed to upload image',
+                message: error.message || 'Failed to upload image',
                 color: 'red',
             });
             return null;
@@ -118,20 +123,68 @@ export default function CreateListing() {
         }
     };
 
-    const handleSubmit = async (values: typeof form.values) => {
-        if (!user || !token) return;
+    // Fetch listing data on mount
+    useEffect(() => {
+        const fetchListing = async () => {
+            if (!id) {
+                navigate('/dashboard');
+                return;
+            }
 
-        // Validate image
-        if (!imageFile && !values.coverImage) {
-            setError('Please select a cover image');
-            return;
-        }
+            setFetchingListing(true);
+            const response = await listingsApi.getById(id);
+            
+            if (response.success && response.data) {
+                const listing = response.data;
+                
+                // Verify the current user is the host of this listing
+                if (listing.hostId !== user?.id) {
+                    notifications.show({
+                        title: 'Unauthorized',
+                        message: 'You can only edit your own listings.',
+                        color: 'red',
+                    });
+                    navigate('/dashboard');
+                    return;
+                }
+
+                // Populate form with listing data
+                form.setValues({
+                    title: listing.title,
+                    description: listing.description || '',
+                    inventoryType: listing.inventoryType,
+                    location: listing.location,
+                    localPrice: listing.localPrice,
+                    foreignPrice: listing.foreignPrice,
+                    capacity: listing.capacity,
+                    coverImage: listing.coverImage || '',
+                    socialMediaInstagram: listing.socialMediaInstagram || '',
+                    socialMediaFacebook: listing.socialMediaFacebook || '',
+                });
+                
+                // Set existing image as preview
+                if (listing.coverImage) {
+                    setImagePreview(listing.coverImage);
+                }
+            } else {
+                setError(response.error || 'Failed to load listing');
+            }
+            
+            setFetchingListing(false);
+        };
+
+        fetchListing();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id]);
+
+    const handleSubmit = async (values: typeof form.values) => {
+        if (!user || !token || !id) return;
 
         setLoading(true);
         setError(null);
 
         try {
-            // Upload image first if file is selected
+            // Upload new image if file is selected
             let coverImageUrl = values.coverImage;
             if (imageFile) {
                 coverImageUrl = await uploadImage();
@@ -142,7 +195,8 @@ export default function CreateListing() {
                 }
             }
 
-            const response = await listingsApi.create(
+            const response = await listingsApi.update(
+                id,
                 {
                     ...values,
                     coverImage: coverImageUrl,
@@ -153,25 +207,36 @@ export default function CreateListing() {
 
             if (response.success) {
                 notifications.show({
-                    title: 'Listing Created!',
-                    message: 'Your listing is now live.',
+                    title: 'Listing Updated!',
+                    message: 'Your changes have been saved.',
                     color: 'teal',
                 });
                 navigate('/dashboard');
             } else {
-                setError(response.error || 'Failed to create listing');
+                setError(response.error || 'Failed to update listing');
             }
-        } catch (err: any) {
-            setError(err.message || 'An error occurred');
+        } catch (err: unknown) {
+            const error = err as Error;
+            setError(error.message || 'An error occurred');
         }
 
         setLoading(false);
     };
 
+    if (fetchingListing) {
+        return (
+            <Container size="sm" py="xl">
+                <Center>
+                    <Loader />
+                </Center>
+            </Container>
+        );
+    }
+
     return (
         <Container size="sm" py="xl">
             <Title order={2} mb="xl">
-                Create New Listing
+                Edit Listing
             </Title>
 
             <Paper withBorder shadow="md" p={30} radius="md">
@@ -243,7 +308,7 @@ export default function CreateListing() {
                         <Stack gap="xs">
                             <FileInput
                                 label="Cover Image"
-                                placeholder="Click to upload an image"
+                                placeholder="Click to upload a new image"
                                 accept="image/png,image/jpeg,image/jpg,image/webp"
                                 leftSection={<IconUpload size={16} />}
                                 onChange={handleImageChange}
@@ -286,7 +351,7 @@ export default function CreateListing() {
                                 Cancel
                             </Button>
                             <Button type="submit" loading={loading || uploading}>
-                                Create Listing
+                                Save Changes
                             </Button>
                         </Group>
                     </Stack>

@@ -1,10 +1,11 @@
 import { Context, Next } from 'hono';
-import { getSupabaseClient } from '@/utils/supabase';
+import { verifyToken, AuthUser as JWTAuthUser } from '@/utils/auth';
 
 // Define the type for the user object in context
 export type AuthUser = {
     id: string;
-    email?: string;
+    email: string;
+    userType: 'tourist' | 'host';
 };
 
 // Extend Hono Context to include user
@@ -22,28 +23,23 @@ export const authMiddleware = async (c: Context, next: Next) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const supabase = getSupabaseClient();
 
-    // Verify token using Supabase Auth
+    // Verify JWT token
     console.log('Auth check token:', token.substring(0, 10) + '...');
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    const decoded = verifyToken(token);
 
-    if (error) {
-        console.error('Auth verify error:', error);
-        return c.json({ error: 'Unauthorized: ' + error.message }, 401);
+    if (!decoded) {
+        console.error('Auth verify error: Invalid or expired token');
+        return c.json({ error: 'Unauthorized: Invalid or expired token' }, 401);
     }
 
-    if (!user) {
-        console.warn('Auth verify: User not found for token');
-        return c.json({ error: 'Unauthorized: User not found' }, 401);
-    }
-
-    console.log('Auth success for user:', user.id);
+    console.log('Auth success for user:', decoded.id);
 
     // Attach user to context
     c.set('user', {
-        id: user.id,
-        email: user.email,
+        id: decoded.id,
+        email: decoded.email,
+        userType: decoded.userType
     });
 
     await next();

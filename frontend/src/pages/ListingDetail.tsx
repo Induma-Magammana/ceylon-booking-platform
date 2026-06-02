@@ -15,13 +15,16 @@ import {
     Skeleton,
     Alert,
     Divider,
+    ActionIcon,
+    Anchor,
 } from '@mantine/core';
 import { DateInput } from '@mantine/dates';
 import { notifications } from '@mantine/notifications';
-import { IconMapPin, IconCalendar, IconUsers, IconAlertCircle } from '@tabler/icons-react';
+import { IconMapPin, IconCalendar, IconUsers, IconAlertCircle, IconBrandInstagram, IconBrandFacebook } from '@tabler/icons-react';
 import { listingsApi, bookingsApi } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 import type { Listing } from '../types';
+import { RatingSummary, ReviewsList } from '../components/ui';
 
 export default function ListingDetail() {
     const { id } = useParams<{ id: string }>();
@@ -146,9 +149,10 @@ export default function ListingDetail() {
                     <Card shadow="sm" radius="md" withBorder>
                         <Card.Section>
                             <Image
-                                src="https://images.unsplash.com/photo-1544551763-46a013bb70d5?w=800&h=400&fit=crop"
+                                src={listing.coverImage || 'https://images.unsplash.com/photo-1544551763-46a013bb70d5?w=800&h=400&fit=crop'}
                                 height={400}
                                 alt={listing.title}
+                                fit="cover"
                             />
                         </Card.Section>
 
@@ -177,6 +181,49 @@ export default function ListingDetail() {
                                     <Text>Capacity: {listing.capacity} per slot</Text>
                                 </Group>
                             </Group>
+
+                            <Divider />
+
+                            {/* Host Information */}
+                            <Stack gap="sm">
+                                <Title order={4}>Host Information</Title>
+                                {listing.host ? (
+                                    <>
+                                        <Group gap="xs">
+                                            <Text fw={500}>Name:</Text>
+                                            <Text>{listing.host.full_name || listing.host.fullName || 'Not available'}</Text>
+                                        </Group>
+                                        <Group gap="xs">
+                                            <Text fw={500}>Contact Number:</Text>
+                                            <Text>{listing.host.contact_number || listing.host.contactNumber || 'Not available'}</Text>
+                                        </Group>
+                                        <Group gap="xs" align="flex-start">
+                                            <Text fw={500}>Social Media:</Text>
+                                            <Group gap="sm">
+                                                {listing.socialMediaInstagram ? (
+                                                    <Anchor href={listing.socialMediaInstagram} target="_blank" rel="noopener noreferrer">
+                                                        <ActionIcon variant="light" color="pink" size="md">
+                                                            <IconBrandInstagram size={18} />
+                                                        </ActionIcon>
+                                                    </Anchor>
+                                                ) : null}
+                                                {listing.socialMediaFacebook ? (
+                                                    <Anchor href={listing.socialMediaFacebook} target="_blank" rel="noopener noreferrer">
+                                                        <ActionIcon variant="light" color="blue" size="md">
+                                                            <IconBrandFacebook size={18} />
+                                                        </ActionIcon>
+                                                    </Anchor>
+                                                ) : null}
+                                                {!listing.socialMediaInstagram && !listing.socialMediaFacebook && (
+                                                    <Text c="dimmed">Not available</Text>
+                                                )}
+                                            </Group>
+                                        </Group>
+                                    </>
+                                ) : (
+                                    <Text c="dimmed">Host information not available</Text>
+                                )}
+                            </Stack>
                         </Stack>
                     </Card>
                 </Grid.Col>
@@ -247,6 +294,19 @@ export default function ListingDetail() {
                             </Button>
                         </Stack>
                     </Card>
+                </Grid.Col>
+            </Grid>
+
+            {/* Reviews Section */}
+            <Grid mt={40}>
+                <Grid.Col span={{ base: 12, md: 5 }}>
+                    <RatingSummary listingId={listing.id} />
+                </Grid.Col>
+                <Grid.Col span={{ base: 12, md: 7 }}>
+                    <Title order={3} mb="lg">
+                        Guest Reviews
+                    </Title>
+                    <ReviewsList listingId={listing.id} limit={5} />
                 </Grid.Col>
             </Grid>
         </Container>

@@ -11,8 +11,11 @@ import {
     Stack,
     Skeleton,
     ThemeIcon,
+    Switch,
+    Badge,
 } from '@mantine/core';
-import { IconPlus, IconHome, IconCalendarEvent, IconCash } from '@tabler/icons-react';
+import { IconPlus, IconHome, IconCalendarEvent, IconCash, IconEye, IconEdit } from '@tabler/icons-react';
+import { notifications } from '@mantine/notifications';
 import { listingsApi } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import type { Listing } from '../../types';
@@ -41,6 +44,41 @@ export default function Dashboard() {
 
         fetchListings();
     }, [user, token, isAuthenticated, navigate]);
+
+    const handleAvailabilityToggle = async (listingId: string, currentAvailability: boolean) => {
+        if (!token) return;
+
+        try {
+            const response = await listingsApi.updateAvailability(listingId, !currentAvailability, token);
+            
+            if (response.success && response.data) {
+                // Update the listing in state
+                setListings(prevListings =>
+                    prevListings.map(listing =>
+                        listing.id === listingId ? response.data! : listing
+                    )
+                );
+                
+                notifications.show({
+                    title: 'Success',
+                    message: `Listing is now ${!currentAvailability ? 'available' : 'unavailable'}`,
+                    color: 'green',
+                });
+            } else {
+                notifications.show({
+                    title: 'Error',
+                    message: response.error || 'Failed to update availability',
+                    color: 'red',
+                });
+            }
+        } catch (error) {
+            notifications.show({
+                title: 'Error',
+                message: 'Failed to update availability',
+                color: 'red',
+            });
+        }
+    };
 
     const stats = [
         {
@@ -80,9 +118,19 @@ export default function Dashboard() {
         <Container size="lg" py="xl">
             <Group justify="space-between" mb="xl">
                 <Title order={2}>Host Dashboard</Title>
-                <Button leftSection={<IconPlus size={16} />} component={Link} to="/dashboard/create-listing">
-                    Create Listing
-                </Button>
+                <Group>
+                    <Button
+                        variant="light"
+                        leftSection={<IconEye size={16} />}
+                        component={Link}
+                        to="/dashboard/bookings"
+                    >
+                        View All Bookings
+                    </Button>
+                    <Button leftSection={<IconPlus size={16} />} component={Link} to="/dashboard/create-listing">
+                        Create Listing
+                    </Button>
+                </Group>
             </Group>
 
             {/* Stats Cards */}
@@ -125,17 +173,45 @@ export default function Dashboard() {
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
                     {listings.map((listing) => (
                         <Card key={listing.id} withBorder p="md">
-                            <Group justify="space-between">
-                                <div>
-                                    <Text fw={500}>{listing.title}</Text>
-                                    <Text size="sm" c="dimmed">
-                                        {listing.location}
-                                    </Text>
-                                </div>
-                                <Button variant="light" size="xs">
-                                    View Bookings
-                                </Button>
-                            </Group>
+                            <Stack gap="sm">
+                                <Group justify="space-between">
+                                    <div>
+                                        <Group gap="xs" mb={4}>
+                                            <Text fw={500}>{listing.title}</Text>
+                                            <Badge color={listing.isAvailable ? 'green' : 'red'} size="sm">
+                                                {listing.isAvailable ? 'Available' : 'Unavailable'}
+                                            </Badge>
+                                        </Group>
+                                        <Text size="sm" c="dimmed">
+                                            {listing.location}
+                                        </Text>
+                                        <Text size="xs" c="dimmed" mt={2}>
+                                            {listing.inventoryType === 'hotel' ? 'Hotel' : 'Vehicle'} • Capacity: {listing.capacity}
+                                        </Text>
+                                    </div>
+                                </Group>
+                                
+                                <Group justify="space-between" mt="xs">
+                                    <Switch
+                                        label="Available for booking"
+                                        checked={listing.isAvailable ?? true}
+                                        onChange={() => handleAvailabilityToggle(listing.id, listing.isAvailable ?? true)}
+                                    />
+                                    <Group gap="xs">
+                                        <Button
+                                            variant="subtle"
+                                            size="xs"
+                                            leftSection={<IconEdit size={14} />}
+                                            onClick={() => navigate(`/dashboard/edit-listing/${listing.id}`)}
+                                        >
+                                            Edit
+                                        </Button>
+                                        <Button variant="light" size="xs">
+                                            View Bookings
+                                        </Button>
+                                    </Group>
+                                </Group>
+                            </Stack>
                         </Card>
                     ))}
                 </SimpleGrid>

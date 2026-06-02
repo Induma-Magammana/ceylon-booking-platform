@@ -51,6 +51,13 @@ export default function Navbar() {
                                 >
                                     My Bookings
                                 </Menu.Item>
+                                <Menu.Item
+                                    leftSection={<IconUser size={14} />}
+                                    component={Link}
+                                    to="/profile"
+                                >
+                                    Profile Settings
+                                </Menu.Item>
                                 <Menu.Divider />
                                 <Menu.Item
                                     color="red"

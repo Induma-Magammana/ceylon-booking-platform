@@ -15,14 +15,16 @@ import {
     Select,
 } from '@mantine/core';
 import { IconSearch, IconMapPin } from '@tabler/icons-react';
-import { listingsApi } from '../services/api';
-import type { Listing } from '../types';
+import { listingsApi, reviewsApi } from '../services/api';
+import type { Listing, ListingRatingSummary } from '../types';
+import { FeaturedReviews, StarRating } from '../components/ui';
 
 export default function Home() {
     const [listings, setListings] = useState<Listing[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [typeFilter, setTypeFilter] = useState<string | null>(null);
+    const [ratings, setRatings] = useState<Record<string, ListingRatingSummary>>({});
 
     useEffect(() => {
         const fetchListings = async () => {
@@ -33,6 +35,23 @@ export default function Home() {
             });
             if (response.success && response.data) {
                 setListings(response.data);
+                
+                // Fetch ratings for all listings (non-blocking)
+                const ratingsData: Record<string, ListingRatingSummary> = {};
+                await Promise.allSettled(
+                    response.data.map(async (listing) => {
+                        try {
+                            const ratingResponse = await reviewsApi.getRatingSummary(listing.id);
+                            if (ratingResponse.success && ratingResponse.data) {
+                                ratingsData[listing.id] = ratingResponse.data;
+                            }
+                        } catch (error) {
+                            // Silently fail for individual ratings
+                            console.warn(`Failed to fetch ratings for listing ${listing.id}`);
+                        }
+                    })
+                );
+                setRatings(ratingsData);
             }
             setLoading(false);
         };
@@ -131,9 +150,10 @@ export default function Home() {
                         >
                             <Card.Section>
                                 <Image
-                                    src={getPlaceholderImage(listing.inventoryType, index)}
+                                    src={listing.coverImage || getPlaceholderImage(listing.inventoryType, index)}
                                     height={200}
                                     alt={listing.title}
+                                    fit="cover"
                                 />
                             </Card.Section>
 
@@ -141,9 +161,16 @@ export default function Home() {
                                 <Text fw={500} lineClamp={1}>
                                     {listing.title}
                                 </Text>
-                                <Badge color={listing.inventoryType === 'slot' ? 'teal' : 'blue'}>
-                                    {listing.inventoryType === 'slot' ? 'Experience' : 'Stay'}
-                                </Badge>
+                                <Group gap="xs">
+                                    {listing.isAvailable === false && (
+                                        <Badge color="red" variant="filled">
+                                            Unavailable
+                                        </Badge>
+                                    )}
+                                    <Badge color={listing.inventoryType === 'slot' ? 'teal' : 'blue'}>
+                                        {listing.inventoryType === 'slot' ? 'Experience' : 'Stay'}
+                                    </Badge>
+                                </Group>
                             </Group>
 
                             <Group gap="xs" c="dimmed" mb="sm">
@@ -151,10 +178,24 @@ export default function Home() {
                                 <Text size="sm">{listing.location}</Text>
                             </Group>
 
-                            <Group justify="space-between">
-                                <Text size="sm" c="dimmed">
-                                    From
-                                </Text>
+                            <Group justify="space-between" align="center">
+                                <Group gap={4}>
+                                    {ratings[listing.id] ? (
+                                        <>
+                                            <StarRating 
+                                                rating={ratings[listing.id].averageRating} 
+                                                size={14} 
+                                            />
+                                            <Text size="xs" c="dimmed">
+                                                ({ratings[listing.id].reviewCount})
+                                            </Text>
+                                        </>
+                                    ) : (
+                                        <Text size="xs" c="dimmed">
+                                            No reviews yet
+                                        </Text>
+                                    )}
+                                </Group>
                                 <Group gap={4}>
                                     <Text fw={700} c="teal">
                                         ${listing.foreignPrice}
@@ -172,6 +213,13 @@ export default function Home() {
                 <Text ta="center" c="dimmed" mt={50}>
                     No listings found. Try adjusting your search.
                 </Text>
+            )}
+
+            {/* Featured Reviews Section */}
+            {!loading && listings.length > 0 && (
+                <Stack mt={80} mb={40}>
+                    <FeaturedReviews limit={6} />
+                </Stack>
             )}
         </Container>
     );

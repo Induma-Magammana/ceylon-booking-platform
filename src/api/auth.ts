@@ -1,117 +1,227 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { getSupabaseClient } from '@/utils/supabase';
+import {
+    generateToken,
+    createUser,
+    getUserByEmail,
+    comparePassword,
+    updateUserProfile,
+    verifyUserPassword,
+} from '@/utils/auth';
+import { authMiddleware } from '@/middleware/auth';
+import { query } from '@/utils/database';
+import { v4 as uuidv4 } from 'uuid';
 
 const auth = new Hono();
 
 // Validation Schemas
 const SignupSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
-  fullName: z.string().min(2),
-  userType: z.enum(['tourist', 'host']),
+    email: z.string().email(),
+    password: z.string().min(6),
+    fullName: z.string().min(2),
+    userType: z.enum(['tourist', 'host']),
 });
 
 const LoginSchema = z.object({
-  email: z.string().email(),
-  password: z.string(),
+    email: z.string().email(),
+    password: z.string(),
+});
+
+const UpdateProfileSchema = z.object({
+    fullName: z.string().min(2).optional(),
+    country: z.string().optional(),
+    email: z.string().email().optional(),
+    currentPassword: z.string().optional(),
+    newPassword: z.string().min(6).optional(),
+    contactNumber: z.string().optional(),
 });
 
 // Register a new user
 auth.post('/signup', async (c) => {
-  try {
-    const body = await c.req.json();
-    const { email, password, fullName, userType } = SignupSchema.parse(body);
-    const supabase = getSupabaseClient();
+    try {
+        const body = await c.req.json();
+        const { email, password, fullName, userType } = SignupSchema.parse(body);
 
-    // 1. Sign up with Supabase Auth
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: fullName,
-          user_type: userType,
-        },
-      },
-    });
-
-    if (authError) {
-      return c.json({ error: authError.message }, 400);
-    }
-
-    if (!authData.user) {
-      return c.json({ error: 'User creation failed' }, 500);
-    }
-
-    // 2. Create entry in public.users table
-    // Note: Ideally this should be handled by a Supabase Trigger for reliability.
-    // If we do it here, we rely on the client having permission or using a service role.
-    // We try to insert using the anon client.
-    
-    // Check if user already exists in public.users (idempotency)
-    const { data: existingUser } = await supabase
-        .from('users')
-        .select('id')
-        .eq('id', authData.user.id)
-        .single();
-    
-    if (!existingUser) {
-        const { error: profileError } = await supabase
-          .from('users')
-          .insert({
-            id: authData.user.id,
-            email: email,
-            full_name: fullName,
-            user_type: userType,
-          });
-
-        if (profileError) {
-          // If profile creation fails, we might want to warn or retry,
-          // but strictly speaking, the auth user exists now.
-          console.error('Failed to create user profile:', profileError);
-          return c.json({ 
-              success: true, 
-              message: 'User registered but profile creation failed. Please contact support.',
-              data: authData 
-          }, 201); 
+        // Check if user already exists
+        const existingUser = await getUserByEmail(email);
+        if (existingUser) {
+            return c.json({ error: 'Email already registered' }, 400);
         }
-    }
 
-    return c.json({ success: true, data: authData }, 201);
+        // Create new user
+        const userId = uuidv4();
+        const user = await createUser(userId, email, password, fullName, userType);
 
-  } catch (error: any) {
-    if (error instanceof z.ZodError) {
-      return c.json({ error: 'Validation failed', details: error.errors }, 400);
+        // Generate JWT token
+        const token = generateToken(user);
+
+        return c.json({
+            success: true,
+            data: {
+                user,
+                token
+            }
+        }, 201);
+
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return c.json({ error: 'Validation failed', details: error.issues }, 400);
+        }
+        console.error('Signup error:', error);
+        return c.json({ error: error.message || 'Internal server error' }, 500);
     }
-    return c.json({ error: error.message || 'Internal server error' }, 500);
-  }
 });
 
 // Login user
 auth.post('/login', async (c) => {
-  try {
-    const body = await c.req.json();
-    const { email, password } = LoginSchema.parse(body);
-    const supabase = getSupabaseClient();
+    try {
+        const body = await c.req.json();
+        const { email, password } = LoginSchema.parse(body);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+        // Get user by email
+        const user = await getUserByEmail(email);
+        if (!user) {
+            return c.json({ error: 'Invalid email or password' }, 401);
+        }
 
-    if (error) {
-      return c.json({ error: error.message }, 401);
+        // Get password hash
+        const results: any = await query(
+            'SELECT password_hash FROM users WHERE email = ?',
+            [email]
+        );
+
+        if (results.length === 0) {
+            return c.json({ error: 'Invalid email or password' }, 401);
+        }
+
+        // Verify password
+        const isValidPassword = await comparePassword(password, results[0].password_hash);
+        if (!isValidPassword) {
+            return c.json({ error: 'Invalid email or password' }, 401);
+        }
+
+        // Generate JWT token
+        const token = generateToken(user);
+
+        return c.json({
+            success: true,
+            data: {
+                user,
+                token
+            }
+        });
+
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return c.json({ error: 'Validation failed', details: error.issues }, 400);
+        }
+        console.error('Login error:', error);
+        return c.json({ error: error.message || 'Internal server error' }, 500);
     }
+});
 
-    return c.json({ success: true, data });
+// Get current user profile
+auth.get('/profile', authMiddleware, async (c) => {
+    try {
+        const user = c.get('user');
+        
+        // Get full user profile from database
+        const results: any = await query(
+            `SELECT id, email, full_name, user_type, country, contact_number, created_at, updated_at
+             FROM users WHERE id = ?`,
+            [user.id]
+        );
 
-  } catch (error: any) {
-    if (error instanceof z.ZodError) {
-        return c.json({ error: 'Validation failed', details: error.errors }, 400);
+        if (results.length === 0) {
+            return c.json({ error: 'User not found' }, 404);
+        }
+
+        const userProfile = results[0];
+        return c.json({
+            success: true,
+            data: {
+                id: userProfile.id,
+                email: userProfile.email,
+                fullName: userProfile.full_name,
+                userType: userProfile.user_type,
+                country: userProfile.country,
+                contactNumber: userProfile.contact_number,
+                createdAt: userProfile.created_at,
+                updatedAt: userProfile.updated_at,
+            }
+        });
+
+    } catch (error: any) {
+        console.error('Get profile error:', error);
+        return c.json({ error: error.message || 'Internal server error' }, 500);
     }
-    return c.json({ error: error.message || 'Internal server error' }, 500);
-  }
+});
+
+// Update user profile
+auth.put('/profile', authMiddleware, async (c) => {
+    try {
+        const body = await c.req.json();
+        const updates = UpdateProfileSchema.parse(body);
+        const user = c.get('user');
+
+        // If email is being changed, check it's not already in use
+        if (updates.email && updates.email !== user.email) {
+            const existingUser = await getUserByEmail(updates.email);
+            if (existingUser) {
+                return c.json({ error: 'Email already in use' }, 400);
+            }
+        }
+
+        // If password is being changed, verify current password
+        if (updates.newPassword && updates.currentPassword) {
+            const isValid = await verifyUserPassword(user.id, updates.currentPassword);
+            if (!isValid) {
+                return c.json({ error: 'Current password is incorrect' }, 400);
+            }
+        }
+
+        // Update user profile
+        await updateUserProfile(user.id, {
+            fullName: updates.fullName,
+            country: updates.country,
+            email: updates.email,
+            contactNumber: updates.contactNumber,
+            password: updates.newPassword,
+        });
+
+        // Get updated profile
+        const results: any = await query(
+            `SELECT id, email, full_name, user_type, country, contact_number, created_at, updated_at
+             FROM users WHERE id = ?`,
+            [user.id]
+        );
+
+        if (results.length === 0) {
+            return c.json({ error: 'User not found' }, 404);
+        }
+
+        const userProfile = results[0];
+        return c.json({
+            success: true,
+            data: {
+                id: userProfile.id,
+                email: userProfile.email,
+                fullName: userProfile.full_name,
+                userType: userProfile.user_type,
+                country: userProfile.country,
+                contactNumber: userProfile.contact_number,
+                createdAt: userProfile.created_at,
+                updatedAt: userProfile.updated_at,
+            }
+        });
+
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            return c.json({ error: 'Validation failed', details: error.issues }, 400);
+        }
+        console.error('Update profile error:', error);
+        return c.json({ error: error.message || 'Internal server error' }, 500);
+    }
 });
 
 export { auth as authRouter };
